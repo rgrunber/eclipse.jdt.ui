@@ -8,7 +8,7 @@
  * Contributors:
  *    Marcel Bruch - initial API and implementation.
  */
-package org.eclipse.recommenders.internal.chain.rcp;
+package org.eclipse.jdt.internal.ui.text.java;
 
 import java.util.LinkedList;
 import java.util.List;
@@ -30,14 +30,11 @@ import org.eclipse.jface.viewers.StyledString;
 import org.eclipse.swt.graphics.Image;
 import org.eclipse.swt.graphics.Point;
 
-import com.google.common.annotations.VisibleForTesting;
-
 /**
  * This class basically delegates all events to a {@link TemplateProposal} but provides some auxiliary methods for
  * testing such as {@link #getChainElementNames()}. It may be extended to track user click feedback to continuously
  * improve chain completion.
  */
-@SuppressWarnings("restriction")
 public class ChainCompletionProposal implements IJavaCompletionProposal, ICompletionProposalExtension2,
         ICompletionProposalExtension3, ICompletionProposalExtension4, ICompletionProposalExtension6 {
 
@@ -51,9 +48,8 @@ public class ChainCompletionProposal implements IJavaCompletionProposal, IComple
         this.chain = chain;
     }
 
-    @VisibleForTesting
     public List<String> getChainElementNames() {
-        final List<String> b = new LinkedList<String>();
+        final List<String> b = new LinkedList<>();
         for (final ChainElement edge : chain.getElements()) {
             final Binding bind = edge.getElementBinding();
             final char[] name = bind instanceof MethodBinding ? ((MethodBinding) bind).selector : bind.readableName();

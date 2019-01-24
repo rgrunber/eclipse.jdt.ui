@@ -8,10 +8,7 @@
  * Contributors:
  *    Stefan Henß - initial API and implementation.
  */
-package org.eclipse.recommenders.internal.chain.rcp;
-
-import static org.eclipse.recommenders.internal.chain.rcp.l10n.LogMessages.WARNING_CANNOT_USE_AS_PARENT_OF_COMPLETION_LOCATION;
-import static org.eclipse.recommenders.utils.Logs.log;
+package org.eclipse.jdt.internal.ui.text.java;
 
 import java.util.Collection;
 import java.util.Collections;
@@ -19,8 +16,10 @@ import java.util.LinkedHashMap;
 import java.util.LinkedList;
 import java.util.List;
 import java.util.Map;
+import java.util.function.Predicate;
 
-import org.apache.commons.lang3.StringUtils;
+import org.eclipse.osgi.util.NLS;
+
 import org.eclipse.jdt.internal.codeassist.InternalCompletionContext;
 import org.eclipse.jdt.internal.codeassist.complete.CompletionOnMessageSend;
 import org.eclipse.jdt.internal.codeassist.complete.CompletionOnQualifiedAllocationExpression;
@@ -40,45 +39,39 @@ import org.eclipse.jdt.internal.compiler.lookup.ReferenceBinding;
 import org.eclipse.jdt.internal.compiler.lookup.Scope;
 import org.eclipse.jdt.internal.compiler.lookup.TypeBinding;
 import org.eclipse.jdt.internal.compiler.util.ObjectVector;
-import org.eclipse.recommenders.completion.rcp.IRecommendersCompletionContext;
-import org.eclipse.recommenders.utils.names.ITypeName;
 
-import com.google.common.base.Optional;
-import com.google.common.base.Predicate;
+import org.eclipse.jdt.ui.text.java.JavaContentAssistInvocationContext;
 
-@SuppressWarnings("restriction")
+import org.eclipse.jdt.internal.ui.JavaPlugin;
+
 public final class TypeBindingAnalyzer {
 
-    private static final Predicate<FieldBinding> NON_STATIC_FIELDS_ONLY_FILTER = new Predicate<FieldBinding>() {
-
-        @Override
-        public boolean apply(final FieldBinding m) {
-            return m.isStatic();
-        }
+	private static final Predicate<FieldBinding> NON_STATIC_FIELDS_ONLY_FILTER = new Predicate<FieldBinding>() {
+		@Override
+		public boolean test(FieldBinding t) {
+			return !t.isStatic();
+		}
     };
 
     private static final Predicate<MethodBinding> RELEVANT_NON_STATIC_METHODS_ONLY_FILTER = new Predicate<MethodBinding>() {
-
-        @Override
-        public boolean apply(final MethodBinding m) {
-            return m.isStatic() || isVoid(m) || m.isConstructor() || hasPrimitiveReturnType(m);
-        }
+		@Override
+		public boolean test(MethodBinding m) {
+			return !m.isStatic() && !isVoid(m) & !m.isConstructor() && !hasPrimitiveReturnType(m);
+		}
     };
 
     private static final Predicate<FieldBinding> STATIC_FIELDS_ONLY_FILTER = new Predicate<FieldBinding>() {
-
-        @Override
-        public boolean apply(final FieldBinding m) {
-            return !m.isStatic();
-        }
+		@Override
+		public boolean test(FieldBinding t) {
+			return t.isStatic();
+		}
     };
 
     private static final Predicate<MethodBinding> STATIC_NON_VOID_NON_PRIMITIVE_METHODS_ONLY_FILTER = new Predicate<MethodBinding>() {
-
-        @Override
-        public boolean apply(final MethodBinding m) {
-            return !m.isStatic() || isVoid(m) || m.isConstructor() || hasPrimitiveReturnType(m);
-        }
+		@Override
+		public boolean test(MethodBinding m) {
+			return m.isStatic() && !isVoid(m) && !m.isConstructor() && hasPrimitiveReturnType(m);
+		}
     };
 
     private TypeBindingAnalyzer() {
@@ -110,7 +103,7 @@ public final class TypeBindingAnalyzer {
         final TypeBinding receiverType = scope.classScope().referenceContext.binding;
         for (final ReferenceBinding cur : findAllSupertypesIncludeingArgument(type)) {
             for (final MethodBinding method : cur.methods()) {
-                if (methodFilter.apply(method) || !method.canBeSeenBy(invocationSite, scope)) {
+                if (!methodFilter.test(method) || !method.canBeSeenBy(invocationSite, scope)) {
                     continue;
                 }
                 final String key = createMethodKey(method);
@@ -119,7 +112,7 @@ public final class TypeBindingAnalyzer {
                 }
             }
             for (final FieldBinding field : cur.fields()) {
-                if (fieldFilter.apply(field) || !field.canBeSeenBy(receiverType, invocationSite, scope)) {
+                if (!fieldFilter.test(field) || !field.canBeSeenBy(receiverType, invocationSite, scope)) {
                     continue;
                 }
                 final String key = createFieldKey(field);
@@ -159,7 +152,8 @@ public final class TypeBindingAnalyzer {
 
     private static String createMethodKey(final MethodBinding method) {
         final String signature = String.valueOf(method.signature());
-        final String signatureWithoutReturnType = StringUtils.substringBeforeLast(signature, ")"); //$NON-NLS-1$
+        int index = signature.lastIndexOf(")"); //$NON-NLS-1$
+        final String signatureWithoutReturnType = index == -1 ? signature : signature.substring(0, index);
         return new StringBuilder().append(method.readableName()).append(signatureWithoutReturnType).toString();
     }
 
@@ -201,25 +195,37 @@ public final class TypeBindingAnalyzer {
         return base;
     }
 
-    public static List<Optional<TypeBinding>> resolveBindingsForExpectedTypes(final IRecommendersCompletionContext ctx,
+    public static List<TypeBinding> resolveBindingsForExpectedTypes(final JavaContentAssistInvocationContext ctx,
             final Scope scope) {
-        final InternalCompletionContext context = (InternalCompletionContext) ctx.getJavaContext().getCoreContext();
+        final InternalCompletionContext context = (InternalCompletionContext) ctx.getCoreContext();
         final ASTNode parent = context.getCompletionNodeParent();
-        final List<Optional<TypeBinding>> bindings = new LinkedList<>();
+        final List<TypeBinding> bindings = new LinkedList<>();
         if (parent instanceof LocalDeclaration) {
-            bindings.add(Optional.fromNullable(((LocalDeclaration) parent).type.resolvedType));
+            TypeBinding tmp= ((LocalDeclaration) parent).type.resolvedType;
+			if (tmp != null) {
+				bindings.add(tmp);
+			}
         } else if (parent instanceof ReturnStatement) {
             bindings.add(resolveReturnStatement(context));
         } else if (parent instanceof FieldDeclaration) {
-            bindings.add(Optional.fromNullable(((FieldDeclaration) parent).type.resolvedType));
+            TypeBinding tmp= ((FieldDeclaration) parent).type.resolvedType;
+			if (tmp != null) {
+				bindings.add(tmp);
+			}
         } else if (parent instanceof Assignment) {
-            bindings.add(Optional.fromNullable(((Assignment) parent).resolvedType));
+            TypeBinding tmp= ((Assignment) parent).resolvedType;
+			if (tmp != null) {
+				bindings.add(tmp);
+			}
         } else if (isCompletionOnMethodParameter(context)) {
-            for (final ITypeName type : ctx.getExpectedTypeNames()) {
-                bindings.add(Optional.of(scope.getType(type.getClassName().toCharArray())));
-            }
+			/*for (final ITypeName type : ctx.getExpectedTypeNames()) {
+				TypeBinding tmp= scope.getType(type.getClassName().toCharArray());
+				if (tmp != null) {
+					bindings.add(tmp);
+				}
+			}*/
         } else {
-            log(WARNING_CANNOT_USE_AS_PARENT_OF_COMPLETION_LOCATION, parent.getClass());
+            JavaPlugin.logErrorMessage(NLS.bind("Cannnot handle '{0}' as parent of completion location.", parent.getClass()));
         }
         return bindings;
     }
@@ -230,16 +236,16 @@ public final class TypeBindingAnalyzer {
                 || context.getCompletionNodeParent() instanceof MessageSend;
     }
 
-    private static Optional<TypeBinding> resolveReturnStatement(final InternalCompletionContext context) {
+    private static TypeBinding resolveReturnStatement(final InternalCompletionContext context) {
         final String expected = String.valueOf(context.getExpectedTypesKeys()[0]);
         final ObjectVector methods = context.getVisibleMethods();
         for (int i = 0; i < methods.size; ++i) {
             final TypeBinding type = ((MethodBinding) methods.elementAt(i)).returnType;
             final String key = String.valueOf(type.computeUniqueKey());
             if (key.equals(expected)) {
-                return Optional.of(type);
+                return type;
             }
         }
-        return Optional.absent();
+        return null;
     }
 }

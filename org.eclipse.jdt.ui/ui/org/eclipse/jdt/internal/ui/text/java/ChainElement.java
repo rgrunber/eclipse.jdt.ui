@@ -8,11 +8,9 @@
  * Contributors:
  *    Marcel Bruch - initial API and implementation.
  */
-package org.eclipse.recommenders.internal.chain.rcp;
+package org.eclipse.jdt.internal.ui.text.java;
 
-import static org.eclipse.recommenders.internal.chain.rcp.l10n.LogMessages.WARNING_CANNOT_HANDLE_RETURN_TYPE;
-import static org.eclipse.recommenders.utils.Checks.ensureIsNotNull;
-import static org.eclipse.recommenders.utils.Logs.log;
+import org.eclipse.osgi.util.NLS;
 
 import org.eclipse.jdt.core.IField;
 import org.eclipse.jdt.core.ILocalVariable;
@@ -23,13 +21,14 @@ import org.eclipse.jdt.internal.compiler.lookup.LocalVariableBinding;
 import org.eclipse.jdt.internal.compiler.lookup.MethodBinding;
 import org.eclipse.jdt.internal.compiler.lookup.TypeBinding;
 
+import org.eclipse.jdt.internal.ui.JavaPlugin;
+
 /**
  * Represents a transition from Type A to Type B by some chain element ( {@link IField} access, {@link IMethod} call, or
  * {@link ILocalVariable} (as entrypoints only)).
  *
  * @see ChainFinder
  */
-@SuppressWarnings("restriction")
 public class ChainElement {
 
     public enum ElementType {
@@ -46,7 +45,10 @@ public class ChainElement {
     private final boolean requireThis;
 
     public ChainElement(final Binding binding, final boolean requireThis) {
-        element = ensureIsNotNull(binding);
+        if (binding == null) {
+            throw new IllegalArgumentException("???"); //$NON-NLS-1$
+        }
+        element = binding;
         this.requireThis = requireThis;
         initializeReturnType();
     }
@@ -66,7 +68,7 @@ public class ChainElement {
             elementType = ElementType.METHOD;
             break;
         default:
-            log(WARNING_CANNOT_HANDLE_RETURN_TYPE, element);
+            JavaPlugin.logErrorMessage(NLS.bind("Cannot handle '{0}' as return type.", element));
         }
         dimension = returnType.dimensions();
     }

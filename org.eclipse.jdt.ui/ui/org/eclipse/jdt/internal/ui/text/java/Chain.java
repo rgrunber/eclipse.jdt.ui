@@ -8,7 +8,7 @@
  * Contributors:
  *    Stefan Henß - initial API and implementation.
  */
-package org.eclipse.recommenders.internal.chain.rcp;
+package org.eclipse.jdt.internal.ui.text.java;
 
 import java.util.List;
 

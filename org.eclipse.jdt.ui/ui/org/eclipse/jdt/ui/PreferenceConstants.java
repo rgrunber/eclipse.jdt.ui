@@ -3874,6 +3874,26 @@ public class PreferenceConstants {
 	 */
 	public static final String EDITOR_JAVA_CODEMINING_SHOW_PARAMETER_NAMES = "java.codemining.parameterNames"; //$NON-NLS-1$
 
+	/**
+	 * @since 3.17
+	 */
+	public static final String PREF_MAX_CHAINS = "recommenders.chain.max_chains"; //$NON-NLS-1$
+    /**
+	 * @since 3.17
+	 */
+    public static final String PREF_MIN_CHAIN_LENGTH = "recommenders.chain.min_chain_length"; //$NON-NLS-1$
+    /**
+	 * @since 3.17
+	 */
+    public static final String PREF_MAX_CHAIN_LENGTH = "recommenders.chain.max_chain_length"; //$NON-NLS-1$
+    /**
+	 * @since 3.17
+	 */
+    public static final String PREF_TIMEOUT = "recommenders.chain.timeout"; //$NON-NLS-1$
+    /**
+	 * @since 3.17
+	 */
+    public static final String PREF_IGNORED_TYPES = "recommenders.chain.ignore_types"; //$NON-NLS-1$
 
 	/**
 	 * Initializes the given preference store with the default values.

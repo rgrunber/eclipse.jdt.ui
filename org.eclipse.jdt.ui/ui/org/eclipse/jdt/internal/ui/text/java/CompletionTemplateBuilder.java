@@ -9,13 +9,13 @@
  *    Marcel Bruch - initial API and implementation.
  *    Olav Lenz - externalize Strings.
  */
-package org.eclipse.recommenders.internal.chain.rcp;
+package org.eclipse.jdt.internal.ui.text.java;
 
 import static java.text.MessageFormat.format;
-import static org.eclipse.recommenders.internal.chain.rcp.l10n.LogMessages.WARNING_CANNOT_HANDLE_ELEMENT_TYPE;
-import static org.eclipse.recommenders.utils.Logs.log;
 
-import org.apache.commons.lang3.StringUtils;
+import java.util.HashMap;
+import java.util.Map;
+
 import org.eclipse.jdt.internal.compiler.lookup.MethodBinding;
 import org.eclipse.jdt.internal.compiler.lookup.TypeBinding;
 import org.eclipse.jdt.internal.compiler.lookup.VariableBinding;
@@ -30,11 +30,7 @@ import org.eclipse.jface.text.templates.ContextTypeRegistry;
 import org.eclipse.jface.text.templates.DocumentTemplateContext;
 import org.eclipse.jface.text.templates.Template;
 import org.eclipse.jface.text.templates.TemplateContextType;
-import org.eclipse.recommenders.internal.chain.rcp.l10n.Messages;
 import org.eclipse.swt.graphics.Image;
-
-import com.google.common.collect.HashMultiset;
-import com.google.common.collect.Multiset;
 
 /**
  * Creates the templates for a given call chain.
@@ -50,12 +46,12 @@ public final class CompletionTemplateBuilder {
         final String body = createChainCode(chain, false, chain.getExpectedDimensions());
 
         final Template template = new Template(title,
-                format(Messages.PROPOSAL_LABEL_ELEMENTS, chain.getElements().size()), "java", body, false); //$NON-NLS-1$
+                format("{0,choice,1#1 element|1<{0,number,integer} elements}", chain.getElements().size()), "java", body, false); //$NON-NLS-1$
         return createTemplateProposal(template, context);
     }
 
     private static String createChainCode(final Chain chain, final boolean createAsTitle, final int expectedDimension) {
-        final HashMultiset<String> varNames = HashMultiset.create();
+        final Map<String, Integer> varNames = new HashMap<> ();
         final StringBuilder sb = new StringBuilder(64);
         for (final ChainElement edge : chain.getElements()) {
             switch (edge.getElementType()) {
@@ -73,7 +69,7 @@ public final class CompletionTemplateBuilder {
                 }
                 break;
             default:
-                log(WARNING_CANNOT_HANDLE_ELEMENT_TYPE, edge);
+//                log(WARNING_CANNOT_HANDLE_ELEMENT_TYPE, edge);
             }
             final boolean appendVariables = !createAsTitle;
             appendArrayDimensions(sb, edge.getReturnTypeDimension(), expectedDimension, appendVariables, varNames);
@@ -91,11 +87,15 @@ public final class CompletionTemplateBuilder {
     }
 
     private static void appendParameters(final StringBuilder sb, final MethodBinding method,
-            final Multiset<String> varNames) {
+            final Map<String, Integer> varNames) {
         sb.append("("); //$NON-NLS-1$
         for (final TypeBinding parameter : method.parameters) {
-            String parameterName = StringUtils.uncapitalize(String.valueOf(parameter.shortReadableName()));
-            parameterName = StringUtils.substringBefore(parameterName, "<"); //$NON-NLS-1$
+            String tmp = String.valueOf(parameter.shortReadableName());
+            String parameterName = tmp.substring(0, 1).toLowerCase() + tmp.substring(1);
+            int index = parameterName.indexOf("<"); //$NON-NLS-1$
+            if (index != -1) {
+                parameterName = parameterName.substring(0, index);
+            }
             appendTemplateVariable(sb, parameterName, varNames);
             sb.append(", "); //$NON-NLS-1$
         }
@@ -107,10 +107,11 @@ public final class CompletionTemplateBuilder {
     }
 
     private static void appendTemplateVariable(final StringBuilder sb, final String varname,
-            final Multiset<String> varNames) {
-        varNames.add(varname);
+            final Map<String, Integer> varNames) {
+        int val = varNames.containsKey(varname) ? varNames.get(varname).intValue() : 0;
+        varNames.put(varname, val + 1);
         sb.append("${").append(varname); //$NON-NLS-1$
-        final int count = varNames.count(varname);
+        final int count = varNames.get(varname);
         if (count > 1) {
             sb.append(count);
         }
@@ -118,7 +119,7 @@ public final class CompletionTemplateBuilder {
     }
 
     private static void appendArrayDimensions(final StringBuilder sb, final int dimension, final int expectedDimension,
-            final boolean appendVariables, final Multiset<String> varNames) {
+            final boolean appendVariables, final Map<String, Integer> varNames) {
         for (int i = dimension; i-- > expectedDimension;) {
             sb.append("["); //$NON-NLS-1$
             if (appendVariables) {

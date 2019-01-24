@@ -8,11 +8,9 @@
  * Contributors:
  *    Marcel Bruch - initial API and implementation.
  */
-package org.eclipse.recommenders.internal.chain.rcp;
+package org.eclipse.jdt.internal.ui.text.java;
 
 import static org.eclipse.recommenders.internal.chain.rcp.TypeBindingAnalyzer.*;
-import static org.eclipse.recommenders.internal.chain.rcp.l10n.LogMessages.WARNING_CANNOT_HANDLE_FOR_FINDING_ENTRY_POINTS;
-import static org.eclipse.recommenders.utils.Logs.log;
 
 import java.util.Arrays;
 import java.util.Collections;
@@ -23,7 +21,12 @@ import java.util.Set;
 import java.util.concurrent.Callable;
 import java.util.concurrent.TimeUnit;
 
-import javax.inject.Inject;
+import org.eclipse.osgi.util.NLS;
+
+import org.eclipse.core.runtime.IProgressMonitor;
+import org.eclipse.core.runtime.IStatus;
+import org.eclipse.core.runtime.NullProgressMonitor;
+import org.eclipse.core.runtime.Status;
 
 import org.eclipse.core.runtime.IProgressMonitor;
 import org.eclipse.jdt.core.IType;
@@ -42,6 +45,8 @@ import org.eclipse.jdt.internal.compiler.lookup.Scope;
 import org.eclipse.jdt.internal.compiler.lookup.TypeBinding;
 import org.eclipse.jdt.internal.compiler.lookup.VariableBinding;
 import org.eclipse.jdt.internal.compiler.util.ObjectVector;
+
+import org.eclipse.jdt.internal.ui.JavaPlugin;
 import org.eclipse.jdt.internal.ui.text.template.contentassist.TemplateProposal;
 import org.eclipse.jdt.ui.PreferenceConstants;
 import org.eclipse.jdt.ui.text.java.ContentAssistInvocationContext;
@@ -57,8 +62,6 @@ import org.eclipse.recommenders.completion.rcp.RecommendersCompletionContext;
 import org.eclipse.recommenders.internal.chain.rcp.ChainRcpModule.ChainCompletion;
 import org.eclipse.recommenders.rcp.IAstProvider;
 
-import com.google.common.annotations.VisibleForTesting;
-import com.google.common.base.Optional;
 import com.google.common.collect.Sets;
 import com.google.common.util.concurrent.SimpleTimeLimiter;
 
@@ -74,13 +77,6 @@ public class ChainCompletionProposalComputer implements IJavaCompletionProposalC
     private Scope scope;
     private InvocationSite invocationSite;
     private IAstProvider astProvider;
-
-    @Inject
-    public ChainCompletionProposalComputer(IAstProvider astProvider,
-            @ChainCompletion final IPreferenceStore preferenceStore) {
-        this.astProvider = astProvider;
-        prefStore = preferenceStore;
-    }
 
     @Override
     public List<ICompletionProposal> computeCompletionProposals(final ContentAssistInvocationContext context,
@@ -100,13 +96,12 @@ public class ChainCompletionProposalComputer implements IJavaCompletionProposalC
         return executeCallChainSearch();
     }
 
-    @VisibleForTesting
     /**
      * Ensures that we only make recommendations if we are not on the default tab. Disables this engine if the user has
      * activated chain completion on default content assist list
      */
     protected boolean shouldMakeProposals() {
-        final Set<String> excluded = Sets.newHashSet(PreferenceConstants.getExcludedCompletionProposalCategories());
+        final List<String> excluded = Arrays.asList(PreferenceConstants.getExcludedCompletionProposalCategories());
         if (excluded.contains(CATEGORY_ID)) {
             // we are excluded on default tab? Then we are not on default tab NOW. We are on a subsequent tab and should
             // make completions:
@@ -124,17 +119,17 @@ public class ChainCompletionProposalComputer implements IJavaCompletionProposalC
         JavaContentAssistInvocationContext jdtCtx = (JavaContentAssistInvocationContext) context;
 
         ctx = new RecommendersCompletionContext(jdtCtx, astProvider);
-        final Optional<Scope> optionalScope = ScopeAccessWorkaround.resolveScope(ctx);
-        if (!optionalScope.isPresent()) {
+        final Scope optionalScope = ScopeAccessWorkaround.resolveScope(ctx);
+        if (optionalScope == null) {
             return false;
         }
-        scope = optionalScope.get();
+        scope = optionalScope;
         return true;
     }
 
     private boolean shouldPerformCompletionOnExpectedType() {
-        final Optional<IType> expected = ctx.getExpectedType();
-        return expected.isPresent() || !ctx.getExpectedTypeNames().isEmpty();
+        final IType expected = ctx.getExpectedType();
+        return expected != null || !ctx.getExpectedTypeNames().isEmpty();
     }
 
     private boolean findEntrypoints() {
@@ -171,12 +166,12 @@ public class ChainCompletionProposalComputer implements IJavaCompletionProposalC
             addPublicInstanceMembersToEntrypoints(((VariableBinding) b).type);
             break;
         default:
-            log(WARNING_CANNOT_HANDLE_FOR_FINDING_ENTRY_POINTS, b);
+            JavaPlugin.logErrorMessage(NLS.bind("Cannot handle '{0}' as source for finding entry points.", b));
         }
     }
 
     private void addPublicStaticMembersToEntrypoints(final TypeBinding type) {
-        for (final Binding m : findAllPublicStaticFieldsAndNonVoidNonPrimitiveStaticMethods(type, invocationSite,
+        for (final Binding m : TypeBindingAnalyzer.findAllPublicStaticFieldsAndNonVoidNonPrimitiveStaticMethods(type, invocationSite,
                 scope)) {
             if (matchesExpectedPrefix(m)) {
                 entrypoints.add(new ChainElement(m, false));
@@ -185,7 +180,7 @@ public class ChainCompletionProposalComputer implements IJavaCompletionProposalC
     }
 
     private void addPublicInstanceMembersToEntrypoints(final TypeBinding type) {
-        for (final Binding m : findVisibleInstanceFieldsAndRelevantInstanceMethods(type, invocationSite, scope)) {
+        for (final Binding m : TypeBindingAnalyzer.findVisibleInstanceFieldsAndRelevantInstanceMethods(type, invocationSite, scope)) {
             if (matchesExpectedPrefix(m)) {
                 entrypoints.add(new ChainElement(m, false));
             }
@@ -248,17 +243,17 @@ public class ChainCompletionProposalComputer implements IJavaCompletionProposalC
     }
 
     private List<ICompletionProposal> executeCallChainSearch() {
-        final int maxChains = prefStore.getInt(ChainsPreferencePage.PREF_MAX_CHAINS);
-        final int minDepth = prefStore.getInt(ChainsPreferencePage.PREF_MIN_CHAIN_LENGTH);
-        final int maxDepth = prefStore.getInt(ChainsPreferencePage.PREF_MAX_CHAIN_LENGTH);
-        final String[] excludedTypes = prefStore.getString(ChainsPreferencePage.PREF_IGNORED_TYPES).split("\\|"); //$NON-NLS-1$
+        final int maxChains = prefStore.getInt(PreferenceConstants.PREF_MAX_CHAINS);
+        final int minDepth = prefStore.getInt(PreferenceConstants.PREF_MIN_CHAIN_LENGTH);
+        final int maxDepth = prefStore.getInt(PreferenceConstants.PREF_MAX_CHAIN_LENGTH);
+        final String[] excludedTypes = prefStore.getString(PreferenceConstants.PREF_IGNORED_TYPES).split("\\|"); //$NON-NLS-1$
         for (int i = 0; i < excludedTypes.length; ++i) {
             excludedTypes[i] = "L" + excludedTypes[i].replace('.', '/'); //$NON-NLS-1$
         }
 
-        final List<Optional<TypeBinding>> expectedTypes = TypeBindingAnalyzer.resolveBindingsForExpectedTypes(ctx,
+        final List<TypeBinding> expectedTypes = TypeBindingAnalyzer.resolveBindingsForExpectedTypes(ctx,
                 scope);
-        final ChainFinder finder = new ChainFinder(expectedTypes, Sets.newHashSet(excludedTypes), invocationSite,
+        final ChainFinder finder = new ChainFinder(expectedTypes, Arrays.asList(excludedTypes), invocationSite,
                 scope);
         try {
             new SimpleTimeLimiter().callWithTimeout(new Callable<Void>() {
@@ -267,7 +262,7 @@ public class ChainCompletionProposalComputer implements IJavaCompletionProposalC
                     finder.startChainSearch(entrypoints, maxChains, minDepth, maxDepth);
                     return null;
                 }
-            }, prefStore.getInt(ChainsPreferencePage.PREF_TIMEOUT), TimeUnit.SECONDS, true);
+            }, prefStore.getInt(PreferenceConstants.PREF_TIMEOUT), TimeUnit.SECONDS, true);
         } catch (final Exception e) {
             setError("Timeout during call chain computation."); //$NON-NLS-1$
         }

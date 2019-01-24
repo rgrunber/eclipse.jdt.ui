@@ -8,51 +8,52 @@
  * Contributors:
  *    Stefan Henß - initial API and implementation.
  */
-package org.eclipse.recommenders.internal.chain.rcp;
+package org.eclipse.jdt.internal.ui.text.java;
 
 import java.lang.reflect.Field;
 
 import org.eclipse.jdt.internal.codeassist.InternalCompletionContext;
 import org.eclipse.jdt.internal.codeassist.InternalExtendedCompletionContext;
 import org.eclipse.jdt.internal.compiler.lookup.Scope;
-import org.eclipse.recommenders.completion.rcp.CompletionContextKey;
-import org.eclipse.recommenders.completion.rcp.IRecommendersCompletionContext;
-import org.eclipse.recommenders.utils.Reflections;
 
-import com.google.common.annotations.Beta;
-import com.google.common.base.Optional;
+import org.eclipse.jdt.ui.text.java.JavaContentAssistInvocationContext;
 
 /**
  * A scope is required to determine for methods and fields if they are visible from the invocation site.
  */
-@SuppressWarnings("restriction")
-@Beta
 public final class ScopeAccessWorkaround {
 
-    private static final Field EXTENDED_CONTEXT = Reflections
-            .getDeclaredField(true, InternalCompletionContext.class, "extendedContext").orNull(); //$NON-NLS-1$
-    private static final Field ASSIST_SCOPE = Reflections
-            .getDeclaredField(true, InternalExtendedCompletionContext.class, "assistScope").orNull(); //$NON-NLS-1$
+    private static Field EXTENDED_CONTEXT;
+    private static Field ASSIST_SCOPE;
 
     private ScopeAccessWorkaround() {
         // Not meant to be instantiated
     }
 
-    public static Optional<Scope> resolveScope(final IRecommendersCompletionContext ctx) {
-        InternalCompletionContext context = ctx.get(CompletionContextKey.INTERNAL_COMPLETIONCONTEXT, null);
-        if (context == null) {
-            return Optional.absent();
+    public static Scope resolveScope(final JavaContentAssistInvocationContext ctx) {
+        try {
+			EXTENDED_CONTEXT = InternalCompletionContext.class.getDeclaredField("extendedContext"); //$NON-NLS-1$
+			EXTENDED_CONTEXT.setAccessible(true);
+			ASSIST_SCOPE = InternalExtendedCompletionContext.class.getDeclaredField("assistScope"); //$NON-NLS-1$
+			ASSIST_SCOPE.setAccessible(true);
+		} catch (NoSuchFieldException | SecurityException e1) {
+			return null;
+		}
+
+        if (ctx.getCoreContext() == null || !(ctx.getCoreContext() instanceof InternalCompletionContext)) {
+            return null;
         }
+        InternalCompletionContext context = (InternalCompletionContext) ctx.getCoreContext();
         if (EXTENDED_CONTEXT == null || ASSIST_SCOPE == null) {
-            return Optional.absent();
+            return null;
         }
         try {
             final InternalExtendedCompletionContext extendedContext = (InternalExtendedCompletionContext) EXTENDED_CONTEXT
                     .get(context);
             if (extendedContext == null) {
-                return Optional.absent();
+                return null;
             }
-            return Optional.fromNullable((Scope) ASSIST_SCOPE.get(extendedContext));
+            return (Scope) ASSIST_SCOPE.get(extendedContext);
         } catch (final IllegalAccessException e) {
             throw new IllegalStateException(e);
         }
