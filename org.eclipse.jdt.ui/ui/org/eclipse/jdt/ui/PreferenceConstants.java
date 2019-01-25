@@ -4052,6 +4052,11 @@ public class PreferenceConstants {
 		store.setDefault(PreferenceConstants.CODEASSIST_AUTOACTIVATION_DELAY, 0);
 		store.setDefault(PreferenceConstants.CODEASSIST_AUTOINSERT, true);
 		store.setDefault(PreferenceConstants.CODEASSIST_DISABLE_COMPLETION_PROPOSAL_TRIGGER_CHARS, false);
+		store.setDefault(PREF_MIN_CHAIN_LENGTH, "2");
+		store.setDefault(PREF_MAX_CHAIN_LENGTH, "4");
+		store.setDefault(PREF_MAX_CHAINS, "20");
+		store.setDefault(PREF_TIMEOUT, "3");
+		store.setDefault(PREF_IGNORED_TYPES, "java.lang.Object");
 
 		// Set the value for the deprecated color constants
 		initializeDeprecatedColorConstants(store);

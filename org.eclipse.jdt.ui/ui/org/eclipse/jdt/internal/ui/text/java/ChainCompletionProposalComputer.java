@@ -10,15 +10,15 @@
  */
 package org.eclipse.jdt.internal.ui.text.java;
 
-import static org.eclipse.recommenders.internal.chain.rcp.TypeBindingAnalyzer.*;
-
 import java.util.Arrays;
 import java.util.Collections;
 import java.util.HashSet;
 import java.util.LinkedList;
 import java.util.List;
 import java.util.Set;
-import java.util.concurrent.Callable;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.Future;
 import java.util.concurrent.TimeUnit;
 
 import org.eclipse.osgi.util.NLS;
@@ -28,8 +28,11 @@ import org.eclipse.core.runtime.IStatus;
 import org.eclipse.core.runtime.NullProgressMonitor;
 import org.eclipse.core.runtime.Status;
 
-import org.eclipse.core.runtime.IProgressMonitor;
+import org.eclipse.jdt.core.ICompilationUnit;
 import org.eclipse.jdt.core.IType;
+import org.eclipse.jdt.core.JavaModelException;
+import org.eclipse.jdt.core.manipulation.JavaManipulation;
+
 import org.eclipse.jdt.internal.codeassist.InternalCompletionContext;
 import org.eclipse.jdt.internal.codeassist.complete.CompletionOnMemberAccess;
 import org.eclipse.jdt.internal.codeassist.complete.CompletionOnMessageSend;
@@ -48,35 +51,26 @@ import org.eclipse.jdt.internal.compiler.util.ObjectVector;
 
 import org.eclipse.jdt.internal.ui.JavaPlugin;
 import org.eclipse.jdt.internal.ui.text.template.contentassist.TemplateProposal;
+
 import org.eclipse.jdt.ui.PreferenceConstants;
+import org.eclipse.jdt.ui.text.java.CompletionProposalCollector;
 import org.eclipse.jdt.ui.text.java.ContentAssistInvocationContext;
 import org.eclipse.jdt.ui.text.java.IJavaCompletionProposalComputer;
 import org.eclipse.jdt.ui.text.java.JavaContentAssistInvocationContext;
-import org.eclipse.jface.preference.IPreferenceStore;
 import org.eclipse.jface.text.contentassist.ICompletionProposal;
 import org.eclipse.jface.text.contentassist.IContextInformation;
-import org.eclipse.recommenders.completion.rcp.CompletionContextKey;
-import org.eclipse.recommenders.completion.rcp.DisableContentAssistCategoryJob;
-import org.eclipse.recommenders.completion.rcp.IRecommendersCompletionContext;
-import org.eclipse.recommenders.completion.rcp.RecommendersCompletionContext;
-import org.eclipse.recommenders.internal.chain.rcp.ChainRcpModule.ChainCompletion;
-import org.eclipse.recommenders.rcp.IAstProvider;
 
-import com.google.common.collect.Sets;
-import com.google.common.util.concurrent.SimpleTimeLimiter;
+import org.eclipse.ui.progress.UIJob;
 
-@SuppressWarnings("restriction")
 public class ChainCompletionProposalComputer implements IJavaCompletionProposalComputer {
 
     public static final String CATEGORY_ID = "org.eclipse.recommenders.chain.rcp.proposalCategory.chain"; //$NON-NLS-1$
 
-    private IRecommendersCompletionContext ctx;
+    private JavaContentAssistInvocationContext ctx;
     private List<ChainElement> entrypoints;
     private String error;
-    private final IPreferenceStore prefStore;
     private Scope scope;
     private InvocationSite invocationSite;
-    private IAstProvider astProvider;
 
     @Override
     public List<ICompletionProposal> computeCompletionProposals(final ContentAssistInvocationContext context,
@@ -101,14 +95,24 @@ public class ChainCompletionProposalComputer implements IJavaCompletionProposalC
      * activated chain completion on default content assist list
      */
     protected boolean shouldMakeProposals() {
-        final List<String> excluded = Arrays.asList(PreferenceConstants.getExcludedCompletionProposalCategories());
+        final List<String> excluded = new LinkedList<>(Arrays.asList(PreferenceConstants.getExcludedCompletionProposalCategories()));
         if (excluded.contains(CATEGORY_ID)) {
             // we are excluded on default tab? Then we are not on default tab NOW. We are on a subsequent tab and should
             // make completions:
             return true;
         }
         // disable and stop computing.
-        new DisableContentAssistCategoryJob(CATEGORY_ID).schedule(300);
+        UIJob job = new UIJob(CATEGORY_ID) {
+            @Override
+            public IStatus runInUIThread(IProgressMonitor monitor) {
+                excluded.add(getName());
+                String[] newExcluded = excluded.toArray(new String [0]);
+                PreferenceConstants.setExcludedCompletionProposalCategories(newExcluded);
+                return Status.OK_STATUS;
+            }
+        };
+        job.setSystem(true);
+        job.schedule(300);
         return false;
     }
 
@@ -116,9 +120,18 @@ public class ChainCompletionProposalComputer implements IJavaCompletionProposalC
         if (!(context instanceof JavaContentAssistInvocationContext)) {
             return false;
         }
-        JavaContentAssistInvocationContext jdtCtx = (JavaContentAssistInvocationContext) context;
 
-        ctx = new RecommendersCompletionContext(jdtCtx, astProvider);
+        ctx = (JavaContentAssistInvocationContext) context;
+        CompletionProposalCollector collector = new CompletionProposalCollector(ctx.getCompilationUnit());
+        collector.setInvocationContext(ctx);
+        ICompilationUnit cu = ctx.getCompilationUnit();
+        int offset = ctx.getInvocationOffset();
+        try {
+            cu.codeComplete(offset, collector, new NullProgressMonitor());
+        } catch (JavaModelException e) {
+            e.printStackTrace();
+        }
+
         final Scope optionalScope = ScopeAccessWorkaround.resolveScope(ctx);
         if (optionalScope == null) {
             return false;
@@ -129,12 +142,18 @@ public class ChainCompletionProposalComputer implements IJavaCompletionProposalC
 
     private boolean shouldPerformCompletionOnExpectedType() {
         final IType expected = ctx.getExpectedType();
-        return expected != null || !ctx.getExpectedTypeNames().isEmpty();
+        return expected != null;
+//        return expected != null || !ctx.getExpectedTypeNames().isEmpty();
     }
 
     private boolean findEntrypoints() {
         entrypoints = new LinkedList<ChainElement>();
-        final ASTNode node = ctx.getCompletionNode().orNull();
+        ASTNode node;
+		if (ctx.getCoreContext() instanceof InternalCompletionContext) {
+			node = ((InternalCompletionContext) ctx.getCoreContext()).getCompletionNode();
+		} else {
+			node = null;
+		}
         if (node instanceof CompletionOnQualifiedNameReference) {
             invocationSite = (CompletionOnQualifiedNameReference) node;
             findEntrypointsForCompletionOnQualifiedName((CompletionOnQualifiedNameReference) node);
@@ -188,7 +207,8 @@ public class ChainCompletionProposalComputer implements IJavaCompletionProposalC
     }
 
     private boolean matchesExpectedPrefix(final Binding binding) {
-        return String.valueOf(binding.readableName()).startsWith(ctx.getPrefix());
+        String prefix = String.valueOf(ctx.getCoreContext().getToken());
+        return String.valueOf(binding.readableName()).startsWith(prefix);
     }
 
     private void findEntrypointsForCompletionOnMemberAccess(final CompletionOnMemberAccess node) {
@@ -200,12 +220,14 @@ public class ChainCompletionProposalComputer implements IJavaCompletionProposalC
     }
 
     private void findEntrypointsForCompletionOnSingleName() {
-        InternalCompletionContext context = ctx.get(CompletionContextKey.INTERNAL_COMPLETIONCONTEXT, null);
-        ObjectVector visibleLocalVariables = context.getVisibleLocalVariables();
-        Set<String> localVariableNames = getLocalVariableNames(visibleLocalVariables);
-        resolveEntrypoints(visibleLocalVariables, localVariableNames);
-        resolveEntrypoints(context.getVisibleFields(), localVariableNames);
-        resolveEntrypoints(context.getVisibleMethods(), localVariableNames);
+        if (ctx.getCoreContext() instanceof InternalCompletionContext) {
+            InternalCompletionContext context= (InternalCompletionContext) ctx.getCoreContext();
+            ObjectVector visibleLocalVariables= context.getVisibleLocalVariables();
+            Set<String> localVariableNames= getLocalVariableNames(visibleLocalVariables);
+            resolveEntrypoints(visibleLocalVariables, localVariableNames);
+            resolveEntrypoints(context.getVisibleFields(), localVariableNames);
+            resolveEntrypoints(context.getVisibleMethods(), localVariableNames);
+        }
     }
 
     private static Set<String> getLocalVariableNames(final ObjectVector visibleLocalVariables) {
@@ -239,14 +261,15 @@ public class ChainCompletionProposalComputer implements IJavaCompletionProposalC
     }
 
     private boolean matchesPrefixToken(final Binding decl) {
-        return String.valueOf(decl.readableName()).startsWith(ctx.getPrefix());
+        String prefix = String.valueOf(ctx.getCoreContext().getToken());
+        return String.valueOf(decl.readableName()).startsWith(prefix);
     }
 
     private List<ICompletionProposal> executeCallChainSearch() {
-        final int maxChains = prefStore.getInt(PreferenceConstants.PREF_MAX_CHAINS);
-        final int minDepth = prefStore.getInt(PreferenceConstants.PREF_MIN_CHAIN_LENGTH);
-        final int maxDepth = prefStore.getInt(PreferenceConstants.PREF_MAX_CHAIN_LENGTH);
-        final String[] excludedTypes = prefStore.getString(PreferenceConstants.PREF_IGNORED_TYPES).split("\\|"); //$NON-NLS-1$
+        final int maxChains = Integer.parseInt(JavaManipulation.getPreference(PreferenceConstants.PREF_MAX_CHAINS, ctx.getProject()));
+        final int minDepth = Integer.parseInt(JavaManipulation.getPreference(PreferenceConstants.PREF_MIN_CHAIN_LENGTH, ctx.getProject()));
+        final int maxDepth = Integer.parseInt(JavaManipulation.getPreference(PreferenceConstants.PREF_MAX_CHAIN_LENGTH, ctx.getProject()));
+        final String[] excludedTypes = JavaManipulation.getPreference(PreferenceConstants.PREF_IGNORED_TYPES, ctx.getProject()).split("\\|"); //$NON-NLS-1$
         for (int i = 0; i < excludedTypes.length; ++i) {
             excludedTypes[i] = "L" + excludedTypes[i].replace('.', '/'); //$NON-NLS-1$
         }
@@ -256,13 +279,10 @@ public class ChainCompletionProposalComputer implements IJavaCompletionProposalC
         final ChainFinder finder = new ChainFinder(expectedTypes, Arrays.asList(excludedTypes), invocationSite,
                 scope);
         try {
-            new SimpleTimeLimiter().callWithTimeout(new Callable<Void>() {
-                @Override
-                public Void call() {
-                    finder.startChainSearch(entrypoints, maxChains, minDepth, maxDepth);
-                    return null;
-                }
-            }, prefStore.getInt(PreferenceConstants.PREF_TIMEOUT), TimeUnit.SECONDS, true);
+            ExecutorService executor = Executors.newSingleThreadExecutor();
+            Future<?> future = executor.submit(() -> finder.startChainSearch(entrypoints, maxChains, minDepth, maxDepth));
+            long timeout = Long.parseLong(JavaManipulation.getPreference(PreferenceConstants.PREF_TIMEOUT, ctx.getProject()));
+            future.get(timeout, TimeUnit.SECONDS);
         } catch (final Exception e) {
             setError("Timeout during call chain computation."); //$NON-NLS-1$
         }
@@ -272,7 +292,7 @@ public class ChainCompletionProposalComputer implements IJavaCompletionProposalC
     private List<ICompletionProposal> buildCompletionProposals(final List<Chain> chains) {
         final List<ICompletionProposal> proposals = new LinkedList<>();
         for (final Chain chain : chains) {
-            final TemplateProposal proposal = CompletionTemplateBuilder.create(chain, ctx.getJavaContext());
+            final TemplateProposal proposal = CompletionTemplateBuilder.create(chain, ctx);
             final ChainCompletionProposal completionProposal = new ChainCompletionProposal(proposal, chain);
             proposals.add(completionProposal);
         }
