@@ -13,13 +13,14 @@ package org.eclipse.jdt.internal.ui.text.java;
 import org.eclipse.osgi.util.NLS;
 
 import org.eclipse.jdt.core.IField;
+import org.eclipse.jdt.core.IJavaElement;
 import org.eclipse.jdt.core.ILocalVariable;
 import org.eclipse.jdt.core.IMethod;
-import org.eclipse.jdt.internal.compiler.lookup.Binding;
-import org.eclipse.jdt.internal.compiler.lookup.FieldBinding;
-import org.eclipse.jdt.internal.compiler.lookup.LocalVariableBinding;
-import org.eclipse.jdt.internal.compiler.lookup.MethodBinding;
-import org.eclipse.jdt.internal.compiler.lookup.TypeBinding;
+import org.eclipse.jdt.core.JavaModelException;
+import org.eclipse.jdt.core.dom.IBinding;
+import org.eclipse.jdt.core.dom.IMethodBinding;
+import org.eclipse.jdt.core.dom.ITypeBinding;
+import org.eclipse.jdt.core.dom.IVariableBinding;
 
 import org.eclipse.jdt.internal.ui.JavaPlugin;
 
@@ -37,14 +38,14 @@ public class ChainElement {
         LOCAL_VARIABLE
     }
 
-    private final Binding element;
-    private TypeBinding returnType;
+    private final IBinding element;
+    private ITypeBinding returnType;
     private int dimension;
     private ElementType elementType;
 
     private final boolean requireThis;
 
-    public ChainElement(final Binding binding, final boolean requireThis) {
+    public ChainElement(final IBinding binding, final boolean requireThis) {
         if (binding == null) {
             throw new IllegalArgumentException("???"); //$NON-NLS-1$
         }
@@ -54,27 +55,32 @@ public class ChainElement {
     }
 
     private void initializeReturnType() {
-        switch (element.kind()) {
-        case Binding.FIELD:
-            returnType = ((FieldBinding) element).type;
-            elementType = ElementType.FIELD;
+        switch (element.getKind()) {
+        case IBinding.VARIABLE:
+            IVariableBinding tmp = ((IVariableBinding)element);
+            returnType = tmp.getType();
+            if (tmp.isField()) {
+                elementType = ElementType.FIELD;
+            } else {
+                elementType = ElementType.LOCAL_VARIABLE;
+            }
             break;
-        case Binding.LOCAL:
-            returnType = ((LocalVariableBinding) element).type;
-            elementType = ElementType.LOCAL_VARIABLE;
-            break;
-        case Binding.METHOD:
-            returnType = ((MethodBinding) element).returnType;
+        case IBinding.METHOD:
+            returnType = ((IMethodBinding) element).getReturnType();
             elementType = ElementType.METHOD;
             break;
+        case IBinding.TYPE:
+            returnType = ((ITypeBinding) element);
+            elementType = ElementType.FIELD;
+            break;
         default:
-            JavaPlugin.logErrorMessage(NLS.bind("Cannot handle '{0}' as return type.", element));
+            JavaPlugin.logErrorMessage(NLS.bind("Cannot handle {0} as return type.", element));
         }
-        dimension = returnType.dimensions();
+        dimension = returnType.getDimensions();
     }
 
     @SuppressWarnings("unchecked")
-    public <T extends Binding> T getElementBinding() {
+    public <T extends IBinding> T getElementBinding() {
         return (T) element;
     }
 
@@ -82,7 +88,7 @@ public class ChainElement {
         return elementType;
     }
 
-    public TypeBinding getReturnType() {
+    public ITypeBinding getReturnType() {
         return returnType;
     }
 
@@ -111,8 +117,15 @@ public class ChainElement {
     @Override
     public String toString() {
         if (elementType == ElementType.METHOD) {
-            final MethodBinding m = (MethodBinding) element;
-            return new StringBuilder().append(m.selector).append(m.signature()).toString();
+            final IMethodBinding m = (IMethodBinding) element;
+            IJavaElement e = m.getJavaElement();
+            if (e instanceof IMethod) {
+                try {
+					return new StringBuilder().append(m.getName()).append(((IMethod) e).getSignature()).toString();
+				} catch (JavaModelException e1) {
+					e1.printStackTrace();
+				}
+            }
         }
         return element.toString();
     }

@@ -16,21 +16,27 @@ import static java.text.MessageFormat.format;
 import java.util.HashMap;
 import java.util.Map;
 
-import org.eclipse.jdt.internal.compiler.lookup.MethodBinding;
-import org.eclipse.jdt.internal.compiler.lookup.TypeBinding;
-import org.eclipse.jdt.internal.compiler.lookup.VariableBinding;
-import org.eclipse.jdt.internal.corext.template.java.JavaContext;
-import org.eclipse.jdt.internal.corext.template.java.JavaContextType;
-import org.eclipse.jdt.internal.ui.JavaPlugin;
-import org.eclipse.jdt.internal.ui.JavaPluginImages;
-import org.eclipse.jdt.internal.ui.text.template.contentassist.TemplateProposal;
-import org.eclipse.jdt.ui.text.java.JavaContentAssistInvocationContext;
+import org.eclipse.swt.graphics.Image;
+
 import org.eclipse.jface.text.Region;
 import org.eclipse.jface.text.templates.ContextTypeRegistry;
 import org.eclipse.jface.text.templates.DocumentTemplateContext;
 import org.eclipse.jface.text.templates.Template;
 import org.eclipse.jface.text.templates.TemplateContextType;
-import org.eclipse.swt.graphics.Image;
+
+import org.eclipse.jdt.core.dom.IMethodBinding;
+import org.eclipse.jdt.core.dom.ITypeBinding;
+
+import org.eclipse.jdt.internal.core.manipulation.BindingLabelProviderCore;
+import org.eclipse.jdt.internal.core.manipulation.JavaElementLabelsCore;
+import org.eclipse.jdt.internal.corext.template.java.JavaContext;
+import org.eclipse.jdt.internal.corext.template.java.JavaContextType;
+
+import org.eclipse.jdt.ui.text.java.JavaContentAssistInvocationContext;
+
+import org.eclipse.jdt.internal.ui.JavaPlugin;
+import org.eclipse.jdt.internal.ui.JavaPluginImages;
+import org.eclipse.jdt.internal.ui.text.template.contentassist.TemplateProposal;
 
 /**
  * Creates the templates for a given call chain.
@@ -60,11 +66,11 @@ public final class CompletionTemplateBuilder {
                 appendVariableString(edge, sb);
                 break;
             case METHOD:
-                final MethodBinding method = edge.getElementBinding();
+                final IMethodBinding method = edge.getElementBinding();
                 if (createAsTitle) {
-                    sb.append(method.readableName());
+                    sb.append(BindingLabelProviderCore.getBindingLabel(method, JavaElementLabelsCore.ALL_DEFAULT));
                 } else {
-                    sb.append(method.selector);
+                    sb.append(method.getName());
                     appendParameters(sb, method, varNames);
                 }
                 break;
@@ -83,14 +89,14 @@ public final class CompletionTemplateBuilder {
         if (edge.requiresThisForQualification() && sb.length() == 0) {
             sb.append("this."); //$NON-NLS-1$
         }
-        sb.append(((VariableBinding) edge.getElementBinding()).name);
+        sb.append((edge.getElementBinding()).getName());
     }
 
-    private static void appendParameters(final StringBuilder sb, final MethodBinding method,
+    private static void appendParameters(final StringBuilder sb, final IMethodBinding method,
             final Map<String, Integer> varNames) {
         sb.append("("); //$NON-NLS-1$
-        for (final TypeBinding parameter : method.parameters) {
-            String tmp = String.valueOf(parameter.shortReadableName());
+        for (final ITypeBinding parameter : method.getParameterTypes()) {
+            String tmp = String.valueOf(parameter.getName());
             String parameterName = tmp.substring(0, 1).toLowerCase() + tmp.substring(1);
             int index = parameterName.indexOf("<"); //$NON-NLS-1$
             if (index != -1) {
@@ -99,7 +105,7 @@ public final class CompletionTemplateBuilder {
             appendTemplateVariable(sb, parameterName, varNames);
             sb.append(", "); //$NON-NLS-1$
         }
-        if (method.parameters.length > 0) {
+        if (method.getParameterTypes().length > 0) {
             deleteLastChar(sb);
             deleteLastChar(sb);
         }

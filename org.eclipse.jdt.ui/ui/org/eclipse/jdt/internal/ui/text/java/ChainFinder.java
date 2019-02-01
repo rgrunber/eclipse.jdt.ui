@@ -11,48 +11,45 @@
  */
 package org.eclipse.jdt.internal.ui.text.java;
 
+import java.util.Collection;
 import java.util.Collections;
 import java.util.HashMap;
 import java.util.LinkedList;
 import java.util.List;
 import java.util.Map;
 
-import org.eclipse.jdt.internal.compiler.lookup.ArrayBinding;
-import org.eclipse.jdt.internal.compiler.lookup.Binding;
-import org.eclipse.jdt.internal.compiler.lookup.InvocationSite;
-import org.eclipse.jdt.internal.compiler.lookup.Scope;
-import org.eclipse.jdt.internal.compiler.lookup.TypeBinding;
+import org.eclipse.jdt.core.IJavaElement;
+import org.eclipse.jdt.core.dom.IBinding;
+import org.eclipse.jdt.core.dom.ITypeBinding;
 
 public class ChainFinder {
 
-    private final List<TypeBinding> expectedTypes;
+    private final List<ITypeBinding> expectedTypes;
     private final List<String> excludedTypes;
 
-    private final InvocationSite invocationSite;
-    private final Scope scope;
+    private final IJavaElement invocationSite;
 
     private final List<Chain> chains = new LinkedList<>();
 
-    private final Map<Binding, ChainElement> edgeCache = new HashMap<>();
-    private final Map<TypeBinding, List<Binding>> fieldsAndMethodsCache = new HashMap<>();
-    private final Map<Map<ChainElement, TypeBinding>, Boolean> assignableCache = new HashMap<>();
+    private final Map<IBinding, ChainElement> edgeCache = new HashMap<>();
+    private final Map<Map<ITypeBinding, Boolean>, List<IBinding>> fieldsAndMethodsCache = new HashMap<>();
+    private final Map<Map<ChainElement, ITypeBinding>, Boolean> assignableCache = new HashMap<>();
 
-    ChainFinder(final List<TypeBinding> expectedTypes, final List<String> excludedTypes,
-            final InvocationSite invocationSite, final Scope scope) {
+    ChainFinder(final List<ITypeBinding> expectedTypes, final List<String> excludedTypes,
+            final IJavaElement invocationSite) {
         this.expectedTypes = expectedTypes;
         this.excludedTypes = excludedTypes;
         this.invocationSite = invocationSite;
-        this.scope = scope;
     }
 
     void startChainSearch(final List<ChainElement> entrypoints, final int maxChains, final int minDepth,
             final int maxDepth) {
-        for (final TypeBinding expected : expectedTypes) {
-            if (expected != null && !isFromExcludedType(expected)) {
-                TypeBinding expectedType = expected;
+        for (final ITypeBinding expected : expectedTypes) {
+            if (expected != null && !ChainFinder.isFromExcludedType(excludedTypes, expected)) {
+                ITypeBinding expectedType = expected;
                 int expectedDimension = 0;
-                if (expectedType instanceof ArrayBinding) {
-                    expectedDimension = ((ArrayBinding) expectedType).dimensions();
+                if (expectedType.isArray()) {
+                    expectedDimension = expectedType.getDimensions();
                     expectedType = TypeBindingAnalyzer.removeArrayWrapper(expectedType);
                 }
                 searchChainsForExpectedType(expectedType, expectedDimension, entrypoints, maxChains, minDepth,
@@ -61,7 +58,7 @@ public class ChainFinder {
         }
     }
 
-    private void searchChainsForExpectedType(final TypeBinding expectedType, final int expectedDimensions,
+    private void searchChainsForExpectedType(final ITypeBinding expectedType, final int expectedDimensions,
             final List<ChainElement> entrypoints, final int maxChains, final int minDepth, final int maxDepth) {
         final LinkedList<LinkedList<ChainElement>> incompleteChains = prepareQueue(entrypoints);
 
@@ -101,15 +98,18 @@ public class ChainFinder {
         return incompleteChains;
     }
 
-    private boolean isFromExcludedType(final Binding binding) {
-        String tmp = String.valueOf(binding.computeUniqueKey());
+    public static boolean isFromExcludedType(final List<String> excluded, final IBinding binding) {
+        String tmp = String.valueOf(binding.getKey());
         int index = tmp.indexOf(";"); //$NON-NLS-1$
         final String key = index == -1 ? tmp : tmp.substring(0, index);
-        return excludedTypes.contains(key);
+        return excluded.contains(key);
     }
 
-    private boolean isValidEndOfChain(final ChainElement edge, final TypeBinding expectedType,
+    private boolean isValidEndOfChain(final ChainElement edge, final ITypeBinding expectedType,
             final int expectedDimension) {
+        if (edge.getElementBinding().getKind() == IBinding.TYPE) {
+            return false;
+        }
         Boolean isAssignable = assignableCache.get(Collections.singletonMap(edge, expectedType));
         if (isAssignable == null) {
             isAssignable = TypeBindingAnalyzer.isAssignable(edge, expectedType, expectedDimension);
@@ -126,8 +126,12 @@ public class ChainFinder {
     }
 
     private void searchDeeper(final LinkedList<ChainElement> chain,
-            final List<LinkedList<ChainElement>> incompleteChains, final TypeBinding currentlyVisitedType) {
-        for (final Binding element : findAllFieldsAndMethods(currentlyVisitedType)) {
+            final List<LinkedList<ChainElement>> incompleteChains, final ITypeBinding currentlyVisitedType) {
+        boolean staticOnly = false;
+        if (chain.getLast().getElementBinding().getKind() == IBinding.TYPE) {
+            staticOnly = true;
+        }
+        for (final IBinding element : findAllFieldsAndMethods(currentlyVisitedType, staticOnly)) {
             final ChainElement newEdge = createEdge(element);
             if (!chain.contains(newEdge)) {
                 incompleteChains.add(cloneChainAndAppendEdge(chain, newEdge));
@@ -135,22 +139,24 @@ public class ChainFinder {
         }
     }
 
-    private List<Binding> findAllFieldsAndMethods(final TypeBinding chainElementType) {
-        List<Binding> cached = fieldsAndMethodsCache.get(chainElementType);
+    private List<IBinding> findAllFieldsAndMethods(final ITypeBinding chainElementType, boolean staticOnly) {
+        List<IBinding> cached = fieldsAndMethodsCache.get(Collections.singletonMap(chainElementType, staticOnly));
         if (cached == null) {
             cached = new LinkedList<>();
-            for (final Binding binding : TypeBindingAnalyzer.findVisibleInstanceFieldsAndRelevantInstanceMethods(chainElementType,
-                    invocationSite, scope)) {
-                if (!isFromExcludedType(binding)) {
+           Collection<IBinding> candidates = staticOnly
+                    ? TypeBindingAnalyzer.findAllPublicStaticFieldsAndNonVoidNonPrimitiveStaticMethods(chainElementType, invocationSite)
+                    : TypeBindingAnalyzer.findVisibleInstanceFieldsAndRelevantInstanceMethods(chainElementType, invocationSite);
+            for (final IBinding binding : candidates) {
+                if (!ChainFinder.isFromExcludedType(excludedTypes, binding)) {
                     cached.add(binding);
                 }
             }
-            fieldsAndMethodsCache.put(chainElementType, cached);
+            fieldsAndMethodsCache.put(Collections.singletonMap(chainElementType, staticOnly), cached);
         }
         return cached;
     }
 
-    private ChainElement createEdge(final Binding member) {
+    private ChainElement createEdge(final IBinding member) {
         ChainElement cached = edgeCache.get(member);
         if (cached == null) {
             cached = new ChainElement(member, false);

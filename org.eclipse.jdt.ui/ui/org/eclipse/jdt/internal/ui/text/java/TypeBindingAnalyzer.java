@@ -18,92 +18,86 @@ import java.util.List;
 import java.util.Map;
 import java.util.function.Predicate;
 
-import org.eclipse.osgi.util.NLS;
+import org.eclipse.jdt.core.ICompilationUnit;
+import org.eclipse.jdt.core.IField;
+import org.eclipse.jdt.core.IJavaElement;
+import org.eclipse.jdt.core.IMember;
+import org.eclipse.jdt.core.IMethod;
+import org.eclipse.jdt.core.IType;
+import org.eclipse.jdt.core.JavaModelException;
+import org.eclipse.jdt.core.dom.ASTParser;
+import org.eclipse.jdt.core.dom.IBinding;
+import org.eclipse.jdt.core.dom.IMethodBinding;
+import org.eclipse.jdt.core.dom.ITypeBinding;
+import org.eclipse.jdt.core.dom.IVariableBinding;
+import org.eclipse.jdt.core.dom.Modifier;
 
-import org.eclipse.jdt.internal.codeassist.InternalCompletionContext;
-import org.eclipse.jdt.internal.codeassist.complete.CompletionOnMessageSend;
-import org.eclipse.jdt.internal.codeassist.complete.CompletionOnQualifiedAllocationExpression;
-import org.eclipse.jdt.internal.compiler.ast.ASTNode;
-import org.eclipse.jdt.internal.compiler.ast.Assignment;
-import org.eclipse.jdt.internal.compiler.ast.FieldDeclaration;
-import org.eclipse.jdt.internal.compiler.ast.LocalDeclaration;
-import org.eclipse.jdt.internal.compiler.ast.MessageSend;
-import org.eclipse.jdt.internal.compiler.ast.ReturnStatement;
-import org.eclipse.jdt.internal.compiler.lookup.ArrayBinding;
-import org.eclipse.jdt.internal.compiler.lookup.BaseTypeBinding;
-import org.eclipse.jdt.internal.compiler.lookup.Binding;
-import org.eclipse.jdt.internal.compiler.lookup.FieldBinding;
-import org.eclipse.jdt.internal.compiler.lookup.InvocationSite;
-import org.eclipse.jdt.internal.compiler.lookup.MethodBinding;
-import org.eclipse.jdt.internal.compiler.lookup.ReferenceBinding;
-import org.eclipse.jdt.internal.compiler.lookup.Scope;
-import org.eclipse.jdt.internal.compiler.lookup.TypeBinding;
-import org.eclipse.jdt.internal.compiler.util.ObjectVector;
+import org.eclipse.jdt.internal.corext.dom.Bindings;
+import org.eclipse.jdt.internal.corext.dom.IASTSharedValues;
 
 import org.eclipse.jdt.ui.text.java.JavaContentAssistInvocationContext;
 
-import org.eclipse.jdt.internal.ui.JavaPlugin;
-
 public final class TypeBindingAnalyzer {
 
-	private static final Predicate<FieldBinding> NON_STATIC_FIELDS_ONLY_FILTER = new Predicate<FieldBinding>() {
+	private static final Predicate<IVariableBinding> NON_STATIC_FIELDS_ONLY_FILTER = new Predicate<IVariableBinding>() {
 		@Override
-		public boolean test(FieldBinding t) {
-			return !t.isStatic();
+		public boolean test(IVariableBinding t) {
+			return !Modifier.isStatic(t.getModifiers());
 		}
     };
 
-    private static final Predicate<MethodBinding> RELEVANT_NON_STATIC_METHODS_ONLY_FILTER = new Predicate<MethodBinding>() {
+    private static final Predicate<IMethodBinding> RELEVANT_NON_STATIC_METHODS_ONLY_FILTER = new Predicate<IMethodBinding>() {
 		@Override
-		public boolean test(MethodBinding m) {
-			return !m.isStatic() && !isVoid(m) & !m.isConstructor() && !hasPrimitiveReturnType(m);
+		public boolean test(IMethodBinding m) {
+			return !Modifier.isStatic(m.getModifiers()) && !isVoid(m) & !m.isConstructor() && !hasPrimitiveReturnType(m);
 		}
     };
 
-    private static final Predicate<FieldBinding> STATIC_FIELDS_ONLY_FILTER = new Predicate<FieldBinding>() {
+    private static final Predicate<IVariableBinding> STATIC_FIELDS_ONLY_FILTER = new Predicate<IVariableBinding>() {
 		@Override
-		public boolean test(FieldBinding t) {
-			return t.isStatic();
+		public boolean test(IVariableBinding t) {
+			return Modifier.isStatic(t.getModifiers());
 		}
     };
 
-    private static final Predicate<MethodBinding> STATIC_NON_VOID_NON_PRIMITIVE_METHODS_ONLY_FILTER = new Predicate<MethodBinding>() {
+    private static final Predicate<IMethodBinding> STATIC_NON_VOID_NON_PRIMITIVE_METHODS_ONLY_FILTER = new Predicate<IMethodBinding>() {
 		@Override
-		public boolean test(MethodBinding m) {
-			return m.isStatic() && !isVoid(m) && !m.isConstructor() && hasPrimitiveReturnType(m);
+		public boolean test(IMethodBinding m) {
+			return Modifier.isStatic(m.getModifiers()) && !isVoid(m) && !m.isConstructor() && hasPrimitiveReturnType(m);
 		}
     };
 
     private TypeBindingAnalyzer() {
     }
 
-    static boolean isVoid(final MethodBinding m) {
-        return hasPrimitiveReturnType(m) && m.returnType.constantPoolName()[0] == 'V';
+    static boolean isVoid(final IMethodBinding m) {
+        return hasPrimitiveReturnType(m) && Bindings.isVoidType(m.getReturnType());
     }
 
-    static boolean hasPrimitiveReturnType(final MethodBinding m) {
-        return m.returnType.constantPoolName().length == 1;
+    static boolean hasPrimitiveReturnType(final IMethodBinding m) {
+        return m.getReturnType().isPrimitive();
     }
 
-    public static Collection<Binding> findVisibleInstanceFieldsAndRelevantInstanceMethods(final TypeBinding type,
-            final InvocationSite invocationSite, final Scope scope) {
-        return findFieldsAndMethods(type, invocationSite, scope, NON_STATIC_FIELDS_ONLY_FILTER,
+    public static Collection<IBinding> findVisibleInstanceFieldsAndRelevantInstanceMethods(final ITypeBinding type,
+            final IJavaElement invocationSite) {
+        return findFieldsAndMethods(type, invocationSite, NON_STATIC_FIELDS_ONLY_FILTER,
                 RELEVANT_NON_STATIC_METHODS_ONLY_FILTER);
     }
 
-    public static Collection<Binding> findAllPublicStaticFieldsAndNonVoidNonPrimitiveStaticMethods(
-            final TypeBinding type, final InvocationSite invocationSite, final Scope scope) {
-        return findFieldsAndMethods(type, invocationSite, scope, STATIC_FIELDS_ONLY_FILTER,
+    public static Collection<IBinding> findAllPublicStaticFieldsAndNonVoidNonPrimitiveStaticMethods(
+            final ITypeBinding type, final IJavaElement invocationSite) {
+        return findFieldsAndMethods(type, invocationSite, STATIC_FIELDS_ONLY_FILTER,
                 STATIC_NON_VOID_NON_PRIMITIVE_METHODS_ONLY_FILTER);
     }
 
-    private static Collection<Binding> findFieldsAndMethods(final TypeBinding type, final InvocationSite invocationSite,
-            final Scope scope, final Predicate<FieldBinding> fieldFilter, final Predicate<MethodBinding> methodFilter) {
-        final Map<String, Binding> tmp = new LinkedHashMap<>();
-        final TypeBinding receiverType = scope.classScope().referenceContext.binding;
-        for (final ReferenceBinding cur : findAllSupertypesIncludeingArgument(type)) {
-            for (final MethodBinding method : cur.methods()) {
-                if (!methodFilter.test(method) || !method.canBeSeenBy(invocationSite, scope)) {
+    private static Collection<IBinding> findFieldsAndMethods(final ITypeBinding type, final IJavaElement invocationSite,
+            final Predicate<IVariableBinding> fieldFilter, final Predicate<IMethodBinding> methodFilter) {
+        final Map<String, IBinding> tmp = new LinkedHashMap<>();
+        final IType invocationType = ((IMember) invocationSite).getCompilationUnit().findPrimaryType();
+        final ITypeBinding receiverType = getTypeBindingFrom(invocationType);
+        for (final ITypeBinding cur : findAllSupertypesIncludeingArgument(type)) {
+            for (final IMethodBinding method : cur.getDeclaredMethods()) {
+                if (!methodFilter.test(method) || !methodCanBeSeenBy(method, receiverType)) {
                     continue;
                 }
                 final String key = createMethodKey(method);
@@ -111,8 +105,8 @@ public final class TypeBindingAnalyzer {
                     tmp.put(key, method);
                 }
             }
-            for (final FieldBinding field : cur.fields()) {
-                if (!fieldFilter.test(field) || !field.canBeSeenBy(receiverType, invocationSite, scope)) {
+            for (final IVariableBinding field : cur.getDeclaredFields()) {
+                if (!fieldFilter.test(field) || !fieldCanBeSeenBy(field, receiverType)) {
                     continue;
                 }
                 final String key = createFieldKey(field);
@@ -124,62 +118,79 @@ public final class TypeBindingAnalyzer {
         return tmp.values();
     }
 
-    private static List<ReferenceBinding> findAllSupertypesIncludeingArgument(final TypeBinding type) {
-        final TypeBinding base = removeArrayWrapper(type);
-        if (!(base instanceof ReferenceBinding)) {
+    private static List<ITypeBinding> findAllSupertypesIncludeingArgument(final ITypeBinding type) {
+        final ITypeBinding base = removeArrayWrapper(type);
+        if (type.isPrimitive() || Bindings.isVoidType(type)) {
             return Collections.emptyList();
         }
-        final List<ReferenceBinding> supertypes = new LinkedList<>();
-        final LinkedList<ReferenceBinding> queue = new LinkedList<>();
-        queue.add((ReferenceBinding) base);
+        final List<ITypeBinding> supertypes = new LinkedList<>();
+        final LinkedList<ITypeBinding> queue = new LinkedList<>();
+        queue.add(base);
         while (!queue.isEmpty()) {
-            final ReferenceBinding superType = queue.poll();
+            final ITypeBinding superType = queue.poll();
             if (superType == null || supertypes.contains(superType)) {
                 continue;
             }
             supertypes.add(superType);
-            queue.add(superType.superclass());
-            for (final ReferenceBinding interfc : superType.superInterfaces()) {
+            queue.add(superType.getSuperclass());
+            for (final ITypeBinding interfc : superType.getInterfaces()) {
                 queue.add(interfc);
             }
         }
         return supertypes;
     }
 
-    private static String createFieldKey(final FieldBinding field) {
-        return new StringBuilder().append(field.name).append(field.type.signature()).toString();
+    private static String createFieldKey(final IVariableBinding field) {
+		try {
+			String typeSignature= ((IField)field.getJavaElement()).getTypeSignature();
+			return new StringBuilder().append(field.getName()).append(typeSignature).toString();
+		} catch (JavaModelException e) {
+			e.printStackTrace();
+		}
+		return null;
     }
 
-    private static String createMethodKey(final MethodBinding method) {
-        final String signature = String.valueOf(method.signature());
-        int index = signature.lastIndexOf(")"); //$NON-NLS-1$
-        final String signatureWithoutReturnType = index == -1 ? signature : signature.substring(0, index);
-        return new StringBuilder().append(method.readableName()).append(signatureWithoutReturnType).toString();
+    private static String createMethodKey(final IMethodBinding method) {
+        if (method.getJavaElement() instanceof IMethod) {
+            try {
+                IMethod m = (IMethod) method.getJavaElement();
+                String signature= String.valueOf(m.getSignature());
+                int index = signature.lastIndexOf(")"); //$NON-NLS-1$
+                final String signatureWithoutReturnType = index == -1 ? signature : signature.substring(0, index);
+                return new StringBuilder().append(method.getName()).append(signatureWithoutReturnType).toString();
+            } catch (JavaModelException e) {
+                e.printStackTrace();
+            }
+        }
+        return null;
     }
 
-    public static boolean isAssignable(final ChainElement edge, final TypeBinding expectedType,
+    public static boolean isAssignable(final ChainElement edge, final ITypeBinding expectedType,
             final int expectedDimension) {
         if (expectedDimension <= edge.getReturnTypeDimension()) {
-            final TypeBinding base = removeArrayWrapper(edge.getReturnType());
-            if (base instanceof BaseTypeBinding) {
+            final ITypeBinding base = removeArrayWrapper(edge.getReturnType());
+            if (base.isPrimitive()) {
                 return false;
             }
-            if (base.isCompatibleWith(expectedType)) {
+            if (base.isAssignmentCompatible(expectedType)) {
                 return true;
             }
-            final LinkedList<ReferenceBinding> supertypes = new LinkedList<>();
-            supertypes.add((ReferenceBinding) base);
-            final String expectedSignature = String.valueOf(expectedType.signature());
+            final LinkedList<ITypeBinding> supertypes = new LinkedList<>();
+            supertypes.add(base);
+            String expectedSignature = expectedType.getBinaryName();
+
             while (!supertypes.isEmpty()) {
-                final ReferenceBinding type = supertypes.poll();
-                if (String.valueOf(type.signature()).equals(expectedSignature)) {
+                final ITypeBinding type = supertypes.poll();
+                String typeSignature = type.getBinaryName();
+
+                if (typeSignature.equals(expectedSignature)) {
                     return true;
                 }
-                final ReferenceBinding superclass = type.superclass();
+                final ITypeBinding superclass = type.getSuperclass();
                 if (superclass != null) {
                     supertypes.add(superclass);
                 }
-                for (final ReferenceBinding intf : type.superInterfaces()) {
+                for (final ITypeBinding intf : type.getInterfaces()) {
                     supertypes.add(intf);
                 }
             }
@@ -187,65 +198,125 @@ public final class TypeBindingAnalyzer {
         return false;
     }
 
-    public static TypeBinding removeArrayWrapper(final TypeBinding type) {
-        TypeBinding base = type;
-        while (base instanceof ArrayBinding) {
-            base = ((ArrayBinding) base).elementsType();
+    public static ITypeBinding removeArrayWrapper(final ITypeBinding type) {
+        if (type.getComponentType() != null) {
+            ITypeBinding base = type;
+            while (base.getComponentType() != null) {
+                base = base.getComponentType();
+            }
+            return base;
+        } else {
+            return type;
         }
-        return base;
     }
 
-    public static List<TypeBinding> resolveBindingsForExpectedTypes(final JavaContentAssistInvocationContext ctx,
-            final Scope scope) {
-        final InternalCompletionContext context = (InternalCompletionContext) ctx.getCoreContext();
-        final ASTNode parent = context.getCompletionNodeParent();
-        final List<TypeBinding> bindings = new LinkedList<>();
-        if (parent instanceof LocalDeclaration) {
-            TypeBinding tmp= ((LocalDeclaration) parent).type.resolvedType;
-			if (tmp != null) {
-				bindings.add(tmp);
-			}
-        } else if (parent instanceof ReturnStatement) {
-            bindings.add(resolveReturnStatement(context));
-        } else if (parent instanceof FieldDeclaration) {
-            TypeBinding tmp= ((FieldDeclaration) parent).type.resolvedType;
-			if (tmp != null) {
-				bindings.add(tmp);
-			}
-        } else if (parent instanceof Assignment) {
-            TypeBinding tmp= ((Assignment) parent).resolvedType;
-			if (tmp != null) {
-				bindings.add(tmp);
-			}
-        } else if (isCompletionOnMethodParameter(context)) {
-			/*for (final ITypeName type : ctx.getExpectedTypeNames()) {
-				TypeBinding tmp= scope.getType(type.getClassName().toCharArray());
-				if (tmp != null) {
-					bindings.add(tmp);
-				}
-			}*/
-        } else {
-            JavaPlugin.logErrorMessage(NLS.bind("Cannnot handle '{0}' as parent of completion location.", parent.getClass()));
+    public static List<ITypeBinding> resolveBindingsForExpectedTypes(final JavaContentAssistInvocationContext ctx) {
+        final List<ITypeBinding> bindings = new LinkedList<>();
+        IBinding [] res = resolveBindingsForTypes(ctx.getCompilationUnit(), new IJavaElement [] { ctx.getExpectedType() });
+        if (res.length == 1 && res[0] instanceof ITypeBinding) {
+            bindings.add((ITypeBinding) res[0]);
         }
+
         return bindings;
     }
 
-    private static boolean isCompletionOnMethodParameter(final InternalCompletionContext context) {
-        return context.getCompletionNode() instanceof CompletionOnQualifiedAllocationExpression
-                || context.getCompletionNode() instanceof CompletionOnMessageSend
-                || context.getCompletionNodeParent() instanceof MessageSend;
-    }
+	private static ITypeBinding getTypeBindingFrom(IType type) {
+		IBinding[] res= resolveBindingsForTypes(type.getCompilationUnit(), new IJavaElement [] { type });
+		if (res.length == 1 && res[0] instanceof ITypeBinding) {
+			return (ITypeBinding) res[0];
+		}
 
-    private static TypeBinding resolveReturnStatement(final InternalCompletionContext context) {
-        final String expected = String.valueOf(context.getExpectedTypesKeys()[0]);
-        final ObjectVector methods = context.getVisibleMethods();
-        for (int i = 0; i < methods.size; ++i) {
-            final TypeBinding type = ((MethodBinding) methods.elementAt(i)).returnType;
-            final String key = String.valueOf(type.computeUniqueKey());
-            if (key.equals(expected)) {
-                return type;
-            }
-        }
-        return null;
-    }
+		return null;
+	}
+
+	private static boolean methodCanBeSeenBy(IMethodBinding mb, ITypeBinding invocationType) {
+		if (Modifier.isPublic(mb.getModifiers())) {
+			return true;
+		}
+		if (Bindings.equals(invocationType, mb.getDeclaringClass())) {
+			return true;
+		}
+
+		String invocationPackage= invocationType.getPackage().getName();
+		String methodPackage= mb.getDeclaringClass().getPackage().getName();
+		if (Modifier.isProtected(mb.getModifiers())) {
+			if (invocationPackage.equals(methodPackage)) {
+				return false; // isSuper ?
+			}
+		}
+
+		if (Modifier.isPrivate(mb.getModifiers())) {
+			ITypeBinding mTypeRoot= mb.getDeclaringClass();
+			while (invocationType.getDeclaringClass() != null) {
+				mTypeRoot= mTypeRoot.getDeclaringClass();
+			}
+			ITypeBinding invTypeRoot= invocationType;
+			while (invTypeRoot.getDeclaringClass() != null) {
+				invTypeRoot= invTypeRoot.getDeclaringClass();
+			}
+			return Bindings.equals(invTypeRoot, mTypeRoot);
+		}
+
+		return invocationPackage.equals(methodPackage);
+	}
+
+	private static boolean fieldCanBeSeenBy(IVariableBinding fb, ITypeBinding invocationType) {
+		if (Modifier.isPublic(fb.getModifiers())) {
+			return true;
+		}
+
+		if (Bindings.equals(invocationType, fb.getDeclaringClass())) {
+			return true;
+		}
+
+		String invocationpackage = invocationType.getPackage().getName();
+		String fieldPackage = fb.getDeclaringClass().getPackage().getName();
+		if (Modifier.isProtected(fb.getModifiers())) {
+			if (Bindings.equals(invocationType, fb.getDeclaringClass())) {
+				return true;
+			}
+			if (invocationpackage.equals(fieldPackage)) {
+				return true;
+			}
+
+			ITypeBinding currType = invocationType.getSuperclass();
+			while (currType != null) {
+				if (Bindings.equals(currType, fb.getDeclaringClass())) {
+					return true;
+				}
+				currType = currType.getSuperclass();
+			}
+		}
+
+		if (Modifier.isPrivate(fb.getModifiers())) {
+			ITypeBinding fTypeRoot= fb.getDeclaringClass();
+			while (invocationType.getDeclaringClass() != null) {
+				fTypeRoot= fTypeRoot.getDeclaringClass();
+			}
+			ITypeBinding invTypeRoot= invocationType;
+			while (invTypeRoot.getDeclaringClass() != null) {
+				invTypeRoot= invTypeRoot.getDeclaringClass();
+			}
+			if (Bindings.equalDeclarations(fTypeRoot, invTypeRoot)) {
+				return true;
+			}
+		}
+
+		if (! invocationpackage.equals(fieldPackage)) {
+			return false;
+		}
+
+		return false;
+	}
+
+	public static IBinding [] resolveBindingsForTypes (ICompilationUnit cu, IJavaElement [] elements) {
+		ASTParser parser = ASTParser.newParser(IASTSharedValues.SHARED_AST_LEVEL);
+        parser.setKind(ASTParser.K_COMPILATION_UNIT);
+        parser.setProject(cu.getJavaProject());
+        parser.setSource(cu);
+        parser.setResolveBindings(true);
+        parser.setBindingsRecovery(true);
+        parser.setStatementsRecovery(true);
+        return parser.createBindings(elements, null);
+	}
 }
