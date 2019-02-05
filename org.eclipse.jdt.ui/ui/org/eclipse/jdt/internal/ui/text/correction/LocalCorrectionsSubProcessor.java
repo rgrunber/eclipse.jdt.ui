@@ -51,6 +51,7 @@ import org.eclipse.ui.part.FileEditorInput;
 
 import org.eclipse.jdt.core.ICompilationUnit;
 import org.eclipse.jdt.core.IType;
+import org.eclipse.jdt.core.JavaModelException;
 import org.eclipse.jdt.core.compiler.IProblem;
 import org.eclipse.jdt.core.dom.AST;
 import org.eclipse.jdt.core.dom.ASTNode;
@@ -98,6 +99,7 @@ import org.eclipse.jdt.core.dom.SimpleName;
 import org.eclipse.jdt.core.dom.SimpleType;
 import org.eclipse.jdt.core.dom.SingleVariableDeclaration;
 import org.eclipse.jdt.core.dom.Statement;
+import org.eclipse.jdt.core.dom.StringLiteral;
 import org.eclipse.jdt.core.dom.StructuralPropertyDescriptor;
 import org.eclipse.jdt.core.dom.SwitchCase;
 import org.eclipse.jdt.core.dom.SwitchStatement;
@@ -2057,5 +2059,61 @@ public class LocalCorrectionsSubProcessor {
 		}
 
 		proposals.add(proposal);
+	}
+
+	public static void convertCollectAndJoiningStringStream(IInvocationContext context, IProblemLocation problem, Collection<ICommandAccess> proposals) {
+		try {
+			ASTRewrite rewrite= ASTRewrite.create(context.getASTRoot().getAST());
+			ImportRewrite importRewrite= ImportRewrite.create(context.getCompilationUnit(), true);
+			// X.stream().collect(Collectors.joining(Y))
+			ASTNode oldNode= problem.getCoveredNode(context.getASTRoot());
+
+			if (oldNode instanceof MethodInvocation) {
+				// X.stream(..)
+				Expression streamExpr= ((MethodInvocation) oldNode).getExpression();
+				if (streamExpr instanceof MethodInvocation) {
+					// X
+					Expression oldlistExpr= ((MethodInvocation) streamExpr).getExpression();
+					Expression newListExpr= ASTNodes.copySubtree(rewrite.getAST(), oldlistExpr);
+
+					// Y
+					// The argument to collect(..)
+					Object joiningObj= ((MethodInvocation) oldNode).arguments().get(0);
+					if (joiningObj instanceof MethodInvocation) {
+						Object literalObj;
+						// For Collectors.joining(), use empty string
+						if (((MethodInvocation) joiningObj).arguments().isEmpty()) {
+							StringLiteral tmp=rewrite.getAST().newStringLiteral();
+							tmp.setLiteralValue(""); //$NON-NLS-1$
+							literalObj= tmp;
+						} else {
+							literalObj= ((MethodInvocation) joiningObj).arguments().get(0);
+						}
+
+						// The argument to Collectors.joining(..)
+						if (literalObj instanceof StringLiteral) {
+							StringLiteral oldLiteral= (StringLiteral) literalObj;
+
+							// String.join(Y, X)
+							MethodInvocation newNode= rewrite.getAST().newMethodInvocation();
+							newNode.setExpression(rewrite.getAST().newName(importRewrite.addImport("java.lang.String"))); //$NON-NLS-1$
+							newNode.setName(rewrite.getAST().newSimpleName("join")); //$NON-NLS-1$
+
+							StringLiteral newLiteral= rewrite.getAST().newStringLiteral();
+							newLiteral.setLiteralValue(oldLiteral.getLiteralValue());
+
+							newNode.arguments().add(newLiteral);
+							newNode.arguments().add(newListExpr);
+
+							rewrite.replace(oldNode, newNode, null);
+							proposals.add(new ASTRewriteCorrectionProposal("Replace usage with String.join(..)", context.getCompilationUnit(), rewrite, IProposalRelevance.REPLACE_FIELD_ACCESS_WITH_METHOD));
+						}
+					}
+				}
+			}
+
+		} catch (JavaModelException e) {
+			JavaPlugin.log(e);
+		}
 	}
 }

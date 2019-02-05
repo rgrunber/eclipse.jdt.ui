@@ -1693,6 +1693,9 @@ public class CompilationUnitEditor extends JavaEditor implements IJavaReconcilin
 			listener.reconciled(ast, forced, progressMonitor);
 		}
 
+		// Entry point for analyzing/reporting non-compiler problems
+		ProblemAnalyzer.analyze(ast);
+
 		// Update Java Outline page selection
 		if (!forced && !progressMonitor.isCanceled()) {
 			Shell shell= getSite().getShell();

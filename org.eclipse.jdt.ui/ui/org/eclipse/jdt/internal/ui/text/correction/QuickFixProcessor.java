@@ -52,6 +52,8 @@ import org.eclipse.jdt.internal.ui.text.correction.proposals.TaskMarkerProposal;
   */
 public class QuickFixProcessor implements IQuickFixProcessor {
 
+	// Belongs in org.eclipse.jdt.core.compiler.IProblem
+	public static final int CollectAndJoiningStringStream = 0x20000000 + 1064;
 
 	@Override
 	public boolean hasCorrections(ICompilationUnit cu, int problemId) {
@@ -297,6 +299,7 @@ public class QuickFixProcessor implements IQuickFixProcessor {
 			case IProblem.UndefinedModule:
 			case IProblem.PackageDoesNotExistOrIsEmpty:
 			case IProblem.NotAccessibleType:
+			case CollectAndJoiningStringStream:
 				return true;
 			default:
 				return SuppressWarningsSubProcessor.hasSuppressWarningsProposal(cu.getJavaProject(), problemId)
@@ -832,6 +835,9 @@ public class QuickFixProcessor implements IQuickFixProcessor {
 				break;
 			case IProblem.PackageDoesNotExistOrIsEmpty:
 				ModuleCorrectionsSubProcessor.getPackageDoesNotExistProposals(context, problem, proposals);
+				break;
+			case CollectAndJoiningStringStream:
+				LocalCorrectionsSubProcessor.convertCollectAndJoiningStringStream(context, problem, proposals);
 				break;
 			default:
 		}
